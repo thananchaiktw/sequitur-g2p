@@ -29,7 +29,8 @@ negligent actions or intended actions or fraudulent concealment.
 
 from collections import defaultdict
 import os.path
-from six.moves import cPickle as pickle
+# from six.moves import cPickle as pickle
+import pickle5 as pickle
 import operator
 import numpy as num
 from sequitur import (
