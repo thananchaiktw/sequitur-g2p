@@ -6,34 +6,42 @@ jobs:
     name: Build Python 🐍 distributions 📦 to PyPI and TestPyPI
     strategy:
       matrix:
-        python-version: ['3.6', '3.7', '3.8', '3.9', '3.10']
-        os: [ubuntu-20.04, macos-latest, windows-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+        os: [macos-13, windows-2019]
+        include:
+          - os: ubuntu-20.04
+            python-version: '3.12'
     runs-on: ${{ matrix.os }}
     env:
       PKG_NAME: sequitur-g2p
+      CIBW_SKIP: "cp313*"
       CIBW_BUILD: "cp3*win* cp3*manylinux* cp3*mac*"
+      CIBW_ARCHS_MACOS: "x86_64"
+      CIBW_ARCHS_WINDOWS: "AMD64"
+      CIBW_ARCHS_LINUX: "x86_64 aarch64"
       CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET="10.9" CC="clang++" CXX="clang++" CFLAGS="-std=c++11 -stdlib=libc++" CXXFLAGS="-stdlib=libc++" LDFLAGS="-stdlib=libc++"
-      CIBW_MANYLINUX_X86_64_IMAGE: manylinux2010
-      CIBW_MANYLINUX_I686_IMAGE: manylinux2010
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+      CIBW_MANYLINUX_I686_IMAGE: manylinux2014
       TEST: true
     steps:
       - uses: actions/checkout@master
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       # TODO: support non-x86_64 platforms
-      - if: ${{ (matrix.os == 'ubuntu-20.04') && (matrix.python-version == '3.6') }}
+      - if: ${{ matrix.os == 'ubuntu-20.04' }}
         run: |
-          wget -O - https://downloads.sourceforge.net/swig/swig-4.0.1.tar.gz | tar xzf - &&
-          docker run --rm -e PLAT=manylinux2010_x86_64 -v `pwd`:/io quay.io/pypa/manylinux2010_x86_64 /io/travis/build-wheels.sh
+          wget -O - https://downloads.sourceforge.net/swig/swig-4.2.1.tar.gz | tar xzf - &&
+          docker run --rm -e PLAT=manylinux2014_x86_64 -v `pwd`:/io quay.io/pypa/manylinux2014_x86_64 /io/travis/build-wheels.sh
 
-      - if: ${{ matrix.os == 'windows-latest' }}
+      - if: ${{ matrix.os == 'windows-2019' }}
         run: |
           choco install swig
-      - if: ${{ matrix.os == 'macos-latest' }}
+
+      - if: ${{ matrix.os == 'macos-13' }}
         run: |
           brew update
           brew install swig
@@ -47,39 +55,49 @@ jobs:
           make travis-test
 
       - if: ${{ matrix.os != 'ubuntu-20.04' }}
-        name: Build a binary wheel and a source tarball
-        run: python -m build --sdist --wheel --outdir dist/ .
+        name: Build a binary wheel
+        run: python -m build  --wheel --outdir dist/ .
 
       - run: ls -alR dist/ || true
         shell: bash {0}
-        ##  - name: Publish distribution 📦 to Test PyPI
-        ##    uses: pypa/gh-action-pypi-publish@master
-        ##    with:
-        ##       password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        ##       repository_url: https://test.pypi.org/legacy/
 
-      - if: ${{ startsWith(github.ref, 'refs/tags') && matrix.os == 'ubuntu-20.04' && matrix.python-version == '3.6' }}
-        uses: actions/upload-artifact@v2
+      - if: ${{ matrix.os == 'ubuntu-20.04' }}
+        uses: actions/upload-artifact@v4
         with:
           path: dist/*.tar.gz
-      - if: ${{ startsWith(github.ref, 'refs/tags') && ((matrix.os != 'ubuntu-20.04') || (matrix.os == 'ubuntu-20.04' && matrix.python-version == '3.6')) }}
-        uses: actions/upload-artifact@v2
+          name: sources-${{ matrix.os }}-${{ matrix.python-version }}
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
         with:
           path: dist/*.whl
+          name: wheels-${{ matrix.os }}-${{ matrix.python-version }}
+          compression-level: 0
+
+  merge:
+    needs: build
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Merge All Artifacts
+      uses: actions/upload-artifact/merge@v4
+      with:
+        name: dist
+        delete-merged: true
+        compression-level: 0
 
   publish:
     runs-on: ubuntu-20.04
-    needs: build
+    needs: merge
     steps:
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
         with:
           path: dist
-      - run: mv dist/artifact/* dist/ || true
-      - run: rm -rf dist/artifact || true
+      - run: mv dist/*/* dist/ || true
       - run: rm -rf dist/*-linux_x86_64* || true  # only want manylinux wheels
+      - run: rmdir dist/dist
       - run: ls -alR . || true
       - if: startsWith(github.ref, 'refs/tags')
         name: Publish distribution 📦 to PyPI
-        uses: pypa/gh-action-pypi-publish@master
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
            password: ${{ secrets.PYPI_API_TOKEN }}
